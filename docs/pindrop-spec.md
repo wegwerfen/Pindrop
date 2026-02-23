@@ -1,5 +1,5 @@
 # Pindrop — Project Specification
-**Version:** 0.1 (Draft)  
+**Version:** 0.2 (Draft)  
 **Status:** Pre-development  
 **Last Updated:** February 2026
 
@@ -44,6 +44,28 @@ A single-page application with three primary areas:
 Typing in the search bar filters the grid in real time. Cards animate smoothly — irrelevant cards exit, remaining cards reorder by relevance, sliding into place. Framer Motion handles this. The effect is the collection feeling alive rather than static.
 
 Clicking a card expands it in place using a shared element transition — the card grows to fill the detail view, spatial context is preserved, the grid is dimly visible behind it. The detail view shows full archived content, multiple format tabs (text, markdown, PDF, screenshot depending on type and settings), AI summary, tags, related artifacts, and user notes. The plugin contributes a type-specific section for data unique to that content type.
+
+### Drag and Drop Ingestion
+
+Drag and drop is the primary, zero-configuration ingestion method. No plugins to configure, no new habits to form — drop something onto the grid and it's captured.
+
+The entire main grid area is a drop target. When something is dragged over the window a subtle overlay appears. On drop, the system detects what was dropped and routes it automatically:
+
+```
+something dropped
+  ├── URL string → domain extracted → content plugin router → best match
+  ├── file → MIME type + extension → content plugin router
+  │     ├── image/* → image plugin
+  │     ├── application/pdf → pdf plugin
+  │     ├── text/markdown, text/plain → document plugin
+  │     ├── application/json → inspect structure → maybe chat export?
+  │     └── unrecognized → generic file plugin, user can reassign
+  └── browser link drag → extract URL → treat as URL drop
+```
+
+After a drop, a quick capture overlay appears confirming what was detected — "Webpage: example.com/article" or "PDF: filename.pdf" — with a single optional note field for capture-time context. Dismiss to skip, or add a line about why you saved it. This is the moment to capture intent. Then ingestion proceeds.
+
+If the plugin router guesses the type wrong, the user can reassign from the detail view.
 
 ### Search and Chat
 
@@ -206,6 +228,21 @@ CREATE TABLE plugin_registry (
   "archived_html": true,
   "screenshot": true,
   "readability_extracted": true
+}
+```
+
+**AI chat plugin:**
+```json
+{
+  "platform": "claude",
+  "model": "claude-sonnet-4-6",
+  "message_count": 47,
+  "participants": ["user", "assistant"],
+  "turns": [
+    { "role": "user", "content": "...", "timestamp": "..." },
+    { "role": "assistant", "content": "...", "timestamp": "..." }
+  ],
+  "topic_summary": "Pindrop architecture discussion"
 }
 ```
 
@@ -444,11 +481,13 @@ Structured filters ─┘                                      ↓
 ## Ingestion Pipeline
 
 ```
-source (email / browser extension / API / manual)
+source (drag & drop / email / browser extension / API / manual)
   ↓
-ingestion plugin (parses source, extracts URL or content)
+type detection (MIME type, extension, URL pattern, or ingestion plugin)
   ↓
 content plugin router (which plugin handles this URL/type?)
+  ↓
+[optional] capture overlay (confirm detected type, add capture-time note)
   ↓
 content plugin ingest() (fetch, archive, normalize)
   ↓
@@ -504,6 +543,8 @@ Key global settings:
 - **note** — plain text and markdown notes, locally created
 - **image** — local image upload with EXIF extraction
 - **pdf** — upload or URL, text extraction, page thumbnail
+- **document** — structured files (markdown, Word, code files); format detection, text extraction for FTS, appropriate rendering. Covers generated outputs, exports, and local files without a source URL
+- **ai-chat** — archive conversations from Claude, ChatGPT, and other AI platforms; preserves turn structure, renders as transcript, fully searchable across platforms
 
 ### Auth
 - **single-user** — no authentication, localhost-appropriate default
@@ -538,6 +579,7 @@ Key global settings:
 - Basic REST API (CRUD for artifacts, tags, collections)
 - Vite + React frontend scaffold with Tailwind + shadcn
 - Card grid with masonry layout
+- **Drag and drop ingestion** — primary capture method, works at launch, type detection via MIME/extension, capture-time note overlay
 - Detail view with shared element transition (Framer Motion)
 
 ### Phase 2 — Search and Processing
@@ -563,9 +605,11 @@ Key global settings:
 - PDF content plugin
 - Image content plugin
 - Note content plugin
+- Document content plugin (markdown, Word, code files, generated outputs)
 - Local multi-user auth plugin
 - YouTube plugin (stretch)
 - Reddit post content plugin
+- **AI chat archive plugin** — ingest and archive conversations from Claude, ChatGPT, and other platforms; batch import via platform export files (ChatGPT JSON export etc.); browser extension capture for platforms without export; transcript detail view; semantic search across all archived AI conversations
 
 ### Phase 6 — Community and Polish
 - Plugin packaging and installation from external sources
