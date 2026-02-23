@@ -22,3 +22,4 @@ The core philosophy: your data is yours. Pindrop works without AI, without a sub
 
 ## Pindrop Spec
 
+[Pindrop Spec sheet](../blob/main/docs/pindrop-spec.md)
