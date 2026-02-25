@@ -1,6 +1,6 @@
 # Pindrop — Project Specification
-**Version:** 0.2 (Draft)  
-**Status:** Pre-development  
+**Version:** 0.3 (Draft)
+**Status:** Pre-development
 **Last Updated:** February 2026
 
 ---
@@ -81,6 +81,8 @@ A slide-in chat panel handles natural language queries — "what did I save abou
 **Python + FastAPI**
 
 Python's content processing ecosystem (scraping, PDF extraction, image processing, Readability, AI/ML libraries) is more mature than Node equivalents and directly relevant to this use case. FastAPI provides async support, automatic API documentation, and clean type hints that make coding agent assistance more effective.
+
+The backend runs in a Python virtual environment (venv) to isolate dependencies from the host system. Plugin dependencies install into this same venv — each plugin ships a `requirements.txt` and the installer runs `pip install -r requirements.txt` when a plugin is added.
 
 ### Frontend
 **Vite + React + Tailwind CSS + shadcn/ui**
@@ -219,17 +221,15 @@ CREATE TABLE plugin_registry (
 **Webpage plugin:**
 ```json
 {
-  "url": "https://example.com/article",
+  "canonical_url": "https://example.com/article",
   "byline": "Author Name",
   "site_name": "Example Site",
   "lang": "en",
   "published": "2024-03-15",
-  "word_count": 2400,
-  "archived_html": true,
-  "screenshot": true,
-  "readability_extracted": true
+  "word_count": 2400
 }
 ```
+`canonical_url` is only present if it differs from `source_url` (e.g. after redirects). Presence of archived files is determined by the artifact directory contents, not boolean flags.
 
 **AI chat plugin:**
 ```json
@@ -267,6 +267,19 @@ CREATE TABLE plugin_registry (
 }
 ```
 
+**Image plugin:**
+```json
+{
+  "image_count": 3,
+  "images": [
+    { "filename": "photo1.jpg", "width": 3024, "height": 4032, "exif": { "camera": "iPhone 15", "taken": "2024-03-15T14:22:00" } },
+    { "filename": "photo2.jpg", "width": 3024, "height": 4032, "exif": {} },
+    { "filename": "photo3.jpg", "width": 3024, "height": 4032, "exif": {} }
+  ]
+}
+```
+Single-image artifacts have `image_count: 1`. The card always shows `thumbnail` (first image). Album members are stored as `image_0`, `image_1`, etc. in the artifact directory.
+
 ---
 
 ## Filesystem Structure
@@ -288,13 +301,24 @@ data/
             {hash}.webp
           screenshot.webp
           thumbnail.webp
-      temp/                          -- in-progress captures, cleared on completion
+          image_0.webp               -- image plugin: album members, in order
+          image_1.webp
 
   system/
+    temp/
+      ingest/                        -- plugin working files during ingestion
+        {artifact_id}_raw.html       -- named {artifact_id}_{role}.ext
+        {artifact_id}_thumbnail.webp -- cleared after core moves to final location
+
     plugins/                         -- installed plugin packages
       built-in/
         content/
           webpage/
+            plugin.json              -- manifest
+            plugin.py                -- plugin implementation
+            requirements.txt         -- python dependencies (playwright, etc.)
+            readability.js           -- bundled mozilla readability
+            frontend.json            -- frontend display configuration
           note/
           image/
           reddit/
@@ -318,6 +342,43 @@ data/
 ```
 
 The `raw/` folder is the original artifact — untouched, permanent. The `processed/` folder is derived and can be regenerated. This separation supports future pipeline improvements without data loss.
+
+`data/system/temp/ingest/` is a staging area used during ingestion. Plugins write working files here; the core moves them to the final artifact directory after persistence and clears the temp files.
+
+---
+
+## Repository Structure
+
+```
+Pindrop/
+  backend/                           -- Python + FastAPI
+    venv/                            -- gitignored, created on first setup
+    core/                            -- core application code
+    plugins/
+      built-in/                      -- ships with the repository
+        content/
+          webpage/
+          note/
+          image/
+          ...
+        auth/
+        ingestion/
+        ai/
+        processing/
+        storage/
+      installed/                     -- gitignored, third-party plugins added at runtime
+    requirements.txt                 -- core backend dependencies
+
+  frontend/                          -- Vite + React
+    src/
+      ...
+
+  data/                              -- gitignored, all runtime data
+  docs/
+    pindrop-spec.md
+```
+
+The `backend/plugins/built-in/` directory is the source of truth for both backend logic and frontend display configs. The frontend build process reads `frontend.json` files from plugin directories to wire up the plugin registry at build time.
 
 ---
 
@@ -347,15 +408,18 @@ Every plugin declares itself via a manifest. The core reads this without loading
   "description": "Save Reddit posts with metadata, scores, and comments",
   "author": "",
   "url_patterns": ["reddit.com/r/*/comments/*", "redd.it/*"],
+  "has_frontend": true,
   "config_schema": {
     "save_comments": { "type": "boolean", "default": false, "label": "Save top comments" },
     "comment_depth": { "type": "integer", "default": 3, "label": "Comment depth" }
   },
-  "dependencies": []
+  "dependencies": ["praw"]
 }
 ```
 
 The `config_schema` allows the settings UI to render configuration forms for any plugin without knowing its internals.
+
+`dependencies` lists Python packages for documentation purposes. Plugins also ship a `requirements.txt`; the installer runs `pip install -r requirements.txt` into the backend venv when a plugin is added. `has_frontend` indicates the plugin includes a `frontend.json` defining its card and detail view presentation.
 
 ### Content Plugin Interface
 
@@ -364,15 +428,24 @@ A content plugin must implement:
 ```python
 class ContentPlugin:
     plugin_id: str
+    plugin_version: str
     url_patterns: list[str]
 
-    def can_handle(self, url: str) -> bool:
-        """Return True if this plugin should handle the given URL."""
-
-    def ingest(self, url: str, config: dict) -> ArtifactData:
+    def ingest(self, source: str, config: dict) -> ArtifactData:
         """
-        Fetch and process content. Returns normalized artifact data.
-        Never writes to database or filesystem directly.
+        Ingest content from source (URL or file path). Blocking — runs to
+        completion before returning. Write working files to
+        data/system/temp/ingest/ using {artifact_id}_{role}.ext naming.
+        Core moves files to the final artifact directory after persistence
+        and clears temp files.
+        Raise IngestionError(message) on failure — core surfaces reason to user.
+        """
+
+    def can_handle(self, url: str) -> bool:
+        """
+        Optional runtime routing override for edge cases not covered by
+        url_patterns (e.g. URL shorteners, content-type detection after
+        redirect). Primary routing uses url_patterns from plugin.json.
         """
 
     def get_fts_text(self, artifact: Artifact) -> str:
@@ -386,13 +459,31 @@ class ContentPlugin:
 class ArtifactData:
     title: str
     excerpt: str                     # 2-3 sentence display text
-    thumbnail_path: str | None       # path to generated thumbnail
-    content_path: str | None         # filesystem root for archived content
-    plugin_data: dict                # plugin-specific metadata
-    suggested_tags: list[str]        # optional hints for the AI/tag layer
+    plugin_data: dict                # plugin-specific metadata (maps to plugin_data column)
+    plugin_version: str
+
+    # Temp file paths — role → absolute path in data/system/temp/ingest/
+    # Named {artifact_id}_{role}.ext
+    # Core reads these, moves to final artifact directory, deletes temp files
+    files: dict[str, str]
+    # Standard file roles:
+    #   'raw_html'       — original fetched HTML
+    #   'readable_html'  — Readability-extracted clean HTML
+    #   'readable_txt'   — plain text, feeds FTS index
+    #   'markdown'       — markdown conversion (if enabled in settings)
+    #   'screenshot'     — full-page screenshot
+    #   'thumbnail'      — viewport/cover image for card display
+    #   'pdf'            — PDF file
+    #   'image_0'..'image_N' — image/album members (image plugin), in order
+
+    suggested_tags: list[str] = field(default_factory=list)
+    queue_tasks: list[str] = field(default_factory=list)
+    # task_type values to queue after core persistence:
+    #   'summarize', 'embed'
+    # (thumbnail, readability, screenshot done synchronously by the plugin)
 ```
 
-The plugin never touches the database. It returns data; the core handles persistence.
+The plugin never touches the main database or artifact directories. It writes working files to `data/system/temp/ingest/` and returns `ArtifactData`; the core handles all persistence and cleanup.
 
 ### Auth Plugin Interface
 
@@ -444,6 +535,88 @@ class ProcessingPlugin:
         """Execute processing task for the given artifact."""
 ```
 
+### Frontend Plugin System
+
+Content plugins define their frontend presentation through a `frontend.json` file alongside `plugin.json`. The core frontend reads this configuration and renders accordingly — most plugins require no custom React code.
+
+#### frontend.json
+
+```json
+{
+  "card": {
+    "icon": "globe",
+    "accent": "#4A90D9"
+  },
+  "detail": {
+    "tabs": [
+      { "label": "Article",    "role": "readable_html", "type": "html" },
+      { "label": "Raw Text",   "role": "readable_txt",  "type": "text" },
+      { "label": "Markdown",   "role": "markdown",      "type": "markdown", "editable": true },
+      { "label": "Screenshot", "role": "screenshot",    "type": "image" },
+      { "label": "PDF",        "role": "pdf",           "type": "pdf" }
+    ],
+    "metadata_fields": [
+      { "label": "Author",    "key": "byline" },
+      { "label": "Site",      "key": "site_name" },
+      { "label": "Published", "key": "published" },
+      { "label": "Words",     "key": "word_count" },
+      { "label": "Language",  "key": "lang" }
+    ]
+  }
+}
+```
+
+`tabs` maps to files stored in the artifact directory via the `role` key. Only tabs whose corresponding file exists are shown. `editable: true` enables an edit mode for text-based tab types. `metadata_fields` maps `plugin_data` keys to display labels in the right panel.
+
+#### Detail View Layout
+
+The detail view is shared chrome rendered by the core. Plugins declare their content; the core handles layout, tab switching, and interaction.
+
+```
+┌─────────────────────────────────────────────────────┐
+│  [Tab 1] [Tab 2] [Tab 3] ...                         │  tab bar (from frontend.json tabs)
+│                                    │                 │
+│                                    │  Title          │
+│   Main content area (3/4 width)    │  URL            │
+│   Renders active tab content:      │  Captured       │
+│     html | text | markdown         │  Tags           │
+│     image | image_gallery          │  Notes          │
+│     pdf | json                     │  ─────          │
+│                                    │  [plugin fields]│
+│                                    │  (1/4 width)    │
+├─────────────────────────────────────────────────────┤
+│  [Close]  [Archive]  [Delete]  [Export]              │  button bar (core)
+└─────────────────────────────────────────────────────┘
+```
+
+#### Core Renderer Types
+
+| Type | Description | Notes |
+|---|---|---|
+| `html` | Rendered HTML content | |
+| `text` | Plain text, monospace | `editable: true` supported |
+| `markdown` | Rendered markdown | `editable: true` supported |
+| `json` | Syntax-highlighted JSON | `editable: true` supported |
+| `image` | Single image | |
+| `image_gallery` | One or more images | Navigation controls appear for > 1 image |
+| `pdf` | PDF viewer | |
+
+#### Custom Components (Escape Hatch)
+
+For content types with fundamentally different interaction models, `frontend.json` can declare a custom component name:
+
+```json
+{
+  "detail": {
+    "custom_component": "MyPluginDetail"
+  }
+}
+```
+
+The plugin then ships a pre-compiled `frontend.js` bundle. The backend serves it as a static file; the frontend dynamically imports it on startup. Custom components may only use libraries already bundled in the core frontend (React, Tailwind CSS, shadcn/ui, Framer Motion) — no additional npm dependencies are permitted.
+
+Built-in plugins with custom interaction models (e.g. `ai-chat`) have their detail components built directly into the core frontend rather than loading dynamically.
+
 ---
 
 ## Search Architecture
@@ -489,16 +662,25 @@ content plugin router (which plugin handles this URL/type?)
   ↓
 [optional] capture overlay (confirm detected type, add capture-time note)
   ↓
-content plugin ingest() (fetch, archive, normalize)
+UI shows spinner (card placeholder in grid)
   ↓
-core persistence (write artifact record, queue processing tasks)
+content plugin ingest() — blocking, runs to completion
+  plugin writes working files to data/system/temp/ingest/
   ↓
-processing queue (async: summarize → embed → thumbnail → fts index)
+core persistence
+  moves temp files to final artifact directory
+  writes artifact record to database
+  queues AI processing tasks (summarize, embed)
+  clears temp files
   ↓
-artifact available in UI
+artifact card appears in UI (fully populated)
+  ↓
+processing queue — async, runs in background
+  summarize → embed → fts index
+  card updates as enrichment completes
 ```
 
-Ingestion is non-blocking. The artifact appears in the UI immediately after core persistence with whatever data the content plugin returned synchronously. AI enrichment fills in async. The card updates when enrichment completes.
+`ingest()` is blocking — the card does not appear until the plugin finishes. The UI shows a spinner in the drop zone during ingestion. For most content types this takes a few seconds; Playwright-based ingestion (webpage, screenshot) may take longer. AI enrichment is always async and fills in after the card is visible.
 
 ---
 
@@ -539,9 +721,9 @@ Key global settings:
 ## Built-in Plugins (v1 Targets)
 
 ### Content
-- **webpage** — scrape, Readability extract, screenshot, archive HTML and text
+- **webpage** — fetch and archive via Playwright (single browser session); Mozilla readability.js extracts clean text, readable HTML, and metadata (title, byline, excerpt, site name, language); full-page and viewport screenshots; produces raw HTML, readable HTML, plain text, optional markdown, full-page screenshot, and thumbnail
 - **note** — plain text and markdown notes, locally created
-- **image** — local image upload with EXIF extraction
+- **image** — single image or small album (1–N images); EXIF extraction per image; card shows first image as thumbnail with count indicator for albums
 - **pdf** — upload or URL, text extraction, page thumbnail
 - **document** — structured files (markdown, Word, code files); format detection, text extraction for FTS, appropriate rendering. Covers generated outputs, exports, and local files without a source URL
 - **ai-chat** — archive conversations from Claude, ChatGPT, and other AI platforms; preserves turn structure, renders as transcript, fully searchable across platforms
@@ -621,7 +803,6 @@ Key global settings:
 
 ## Open Questions
 
-- **Frontend framework final decision** — Vite + React confirmed as direction; Solid.js remains an alternative worth revisiting if React proves cumbersome.
 - **Vector store** — sqlite-vec (preferred, single-file story) vs ChromaDB (more capable but separate process). Decide when Phase 2 begins.
 - **Card expansion animation** — shared element transition vs slide-in panel. Prototype both before committing.
 - **External search integration** — which provider(s), how to handle rate limits, whether to make it a plugin.
