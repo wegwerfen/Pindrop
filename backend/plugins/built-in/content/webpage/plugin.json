@@ -1,0 +1,15 @@
+{
+  "id": "webpage",
+  "version": "1.0.0",
+  "category": "content",
+  "display_name": "Webpage",
+  "description": "Capture and archive web pages with full content extraction and screenshots",
+  "author": "",
+  "url_patterns": ["*"],
+  "has_frontend": true,
+  "config_schema": {
+    "save_markdown": { "type": "boolean", "default": false, "label": "Save as Markdown" },
+    "save_screenshot": { "type": "boolean", "default": true, "label": "Take screenshot" }
+  },
+  "dependencies": ["playwright"]
+}

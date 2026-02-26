@@ -1,0 +1,21 @@
+{
+  "card": {
+    "icon": "globe",
+    "accent": "#4A90D9"
+  },
+  "detail": {
+    "tabs": [
+      { "label": "Article",    "role": "readable_html", "type": "html" },
+      { "label": "Raw Text",   "role": "readable_txt",  "type": "text" },
+      { "label": "Markdown",   "role": "markdown",      "type": "markdown", "editable": true },
+      { "label": "Screenshot", "role": "screenshot",    "type": "image" }
+    ],
+    "metadata_fields": [
+      { "label": "Author",    "key": "byline" },
+      { "label": "Site",      "key": "site_name" },
+      { "label": "Published", "key": "published" },
+      { "label": "Words",     "key": "word_count" },
+      { "label": "Language",  "key": "lang" }
+    ]
+  }
+}
