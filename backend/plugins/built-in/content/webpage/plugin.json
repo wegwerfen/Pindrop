@@ -8,8 +8,8 @@
   "url_patterns": ["*"],
   "has_frontend": true,
   "config_schema": {
-    "save_markdown": { "type": "boolean", "default": false, "label": "Save as Markdown" },
-    "save_screenshot": { "type": "boolean", "default": true, "label": "Take screenshot" }
+    "save_screenshot": { "type": "boolean", "default": true,  "label": "Save full-page screenshot" },
+    "save_markdown":   { "type": "boolean", "default": false, "label": "Convert article to Markdown" }
   },
   "dependencies": ["playwright"]
 }

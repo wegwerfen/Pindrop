@@ -1,8 +1,10 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 
 from core.db import get_connection, get_data_path, run_migrations
+from core.ingestion import ingest_url
+from core.plugins.base import IngestionError
 from core.plugins.loader import PluginLoader
 from core.plugins.router import ContentRouter
 
@@ -30,6 +32,8 @@ def health():
     return {"status": "ok"}
 
 
+# --- Plugin endpoints ---
+
 @app.get("/api/plugins")
 def list_plugins(request: Request):
     loader: PluginLoader = request.app.state.plugins
@@ -49,9 +53,31 @@ def list_plugins(request: Request):
 
 @app.get("/api/plugins/route")
 def route_url(url: str, request: Request):
-    """Debug endpoint: show which content plugin would handle a given URL."""
+    """Debug: show which content plugin would handle a given URL."""
     router: ContentRouter = request.app.state.router
     plugin = router.route(url)
     if plugin is None:
         return {"url": url, "plugin": None}
     return {"url": url, "plugin": plugin.plugin_id}
+
+
+# --- Ingest endpoint ---
+
+@app.post("/api/ingest")
+def ingest(url: str, request: Request):
+    """
+    Ingest a URL. Blocking — returns the full artifact record when complete.
+    """
+    conn = get_connection()
+    try:
+        artifact = ingest_url(
+            url,
+            conn,
+            request.app.state.plugins,
+            request.app.state.router,
+        )
+        return artifact
+    except IngestionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    finally:
+        conn.close()

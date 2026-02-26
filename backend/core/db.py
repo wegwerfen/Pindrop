@@ -1,5 +1,7 @@
+import json
 import os
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -7,6 +9,26 @@ from dotenv import load_dotenv
 load_dotenv()
 
 _MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+
+# Default settings written to the 'default' user record on first run.
+# Global knobs that apply across plugins and the application.
+DEFAULT_USER_SETTINGS: dict = {
+    "storage": {
+        "thumbnail_width": 400,
+        "thumbnail_height": 300,
+    },
+    "ai": {
+        "active_provider": None,
+        "auto_summarize": False,
+        "auto_tag": False,
+        "auto_embed": False,
+    },
+    "ui": {
+        "card_size": "medium",
+        "default_sort": "captured_at_desc",
+        "show_archived": False,
+    },
+}
 
 
 def get_data_path() -> Path:
@@ -60,3 +82,17 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         )
         conn.commit()
         print(f"  applied migration: {name}")
+
+
+def ensure_default_user(conn: sqlite3.Connection) -> None:
+    """Create the 'default' user record with default settings if it doesn't exist."""
+    existing = conn.execute("SELECT id FROM user WHERE id = 'default'").fetchone()
+    if existing:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO user (id, display_name, created_at, is_admin, settings) VALUES (?, ?, ?, ?, ?)",
+        ("default", "Default User", now, 1, json.dumps(DEFAULT_USER_SETTINGS)),
+    )
+    conn.commit()
+    print("  created default user")

@@ -1,1 +1,2 @@
 playwright>=1.49.0
+markdownify>=0.13.0

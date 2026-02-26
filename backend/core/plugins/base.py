@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 class IngestionError(Exception):
@@ -39,11 +40,15 @@ class ContentPlugin(ABC):
     url_patterns: list[str]
 
     @abstractmethod
-    def ingest(self, source: str, config: dict) -> ArtifactData:
+    def ingest(self, source: str, artifact_id: str, temp_dir: Path, config: dict) -> ArtifactData:
         """
         Ingest content from source (URL or file path). Blocking — runs to
-        completion before returning. Write working files to
-        data/system/temp/ingest/ using {artifact_id}_{role}.ext naming.
+        completion before returning.
+
+        Write working files to temp_dir using '{artifact_id}_{role}.ext' naming.
+        Return ArtifactData with paths pointing to those temp files.
+        Core moves them to the final artifact directory after persistence.
+
         Raise IngestionError(message) on failure.
         """
 
