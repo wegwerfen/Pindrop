@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 
 from core.api.artifacts import router as artifacts_router
 from core.api.collections import router as collections_router
@@ -29,6 +31,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Pindrop", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app.include_router(artifacts_router, prefix="/api")
 app.include_router(tags_router, prefix="/api")
@@ -90,3 +99,12 @@ def ingest(url: str, request: Request):
         raise HTTPException(status_code=422, detail=str(exc))
     finally:
         conn.close()
+
+
+# --- Production static file serving ---
+# Only activates when frontend/dist/ exists (i.e. after `npm run build`).
+# In dev, Vite's proxy handles /api routing on port 5173.
+_frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
+if _frontend_dist.exists():
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend")
