@@ -2,6 +2,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 
+from core.api.artifacts import router as artifacts_router
+from core.api.collections import router as collections_router
+from core.api.search import router as search_router
+from core.api.tags import router as tags_router
 from core.db import get_connection, get_data_path, run_migrations
 from core.ingestion import ingest_url
 from core.plugins.base import IngestionError
@@ -25,6 +29,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Pindrop", lifespan=lifespan)
+
+app.include_router(artifacts_router, prefix="/api")
+app.include_router(tags_router, prefix="/api")
+app.include_router(collections_router, prefix="/api")
+app.include_router(search_router, prefix="/api")
 
 
 @app.get("/health")

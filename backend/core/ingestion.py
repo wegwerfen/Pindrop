@@ -128,6 +128,16 @@ def ingest_url(
         ),
     )
 
+    # --- Populate FTS index ---
+    fts_text = plugin.get_fts_text({"content_path": str(artifact_dir)})
+    conn.execute(
+        """
+        INSERT INTO artifact_fts(artifact_id, title, excerpt, summary, user_notes, tags, full_text)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (artifact_id, artifact_data.title, artifact_data.excerpt, None, None, None, fts_text),
+    )
+
     # --- Queue AI processing tasks ---
     for task_type in artifact_data.queue_tasks:
         task_id = str(ULID())
